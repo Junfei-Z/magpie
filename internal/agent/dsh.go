@@ -97,12 +97,12 @@ func dshAt(at place) *Agent {
 	desktop := func() bool { return at.spell == nil && (&Agent{ID: "dsh"}).HasApp() }
 	path := filepath.Join(dir, "config.yaml")
 	// a stopped distro's folder is never listed: that starts it (#3896)
-	var files []string
+	var profile string
 	if !at.cold {
-		files = dshProfiles(dir)
+		profile = dshReadProfile(dir)
 	}
-	if len(files) > 0 {
-		path = files[0]
+	if profile != "" {
+		path = profile
 	} else if desktop() {
 		path = dshDesktopFile(dir)
 	}
@@ -141,11 +141,11 @@ func dshAt(at place) *Agent {
 		// /model has magpie's models beside DeepSeek's (Fate on Discord:
 		// DSH went back to Not connected)
 		Joined: func() bool {
-			files := dshProfiles(dir)
-			if len(files) == 0 {
+			path := dshReadProfile(dir)
+			if path == "" {
 				return false
 			}
-			_, items, err := dshRead(files[0])
+			_, items, err := dshRead(path)
 			return err == nil && dshWired(dshOver(dir, items))
 		},
 		// connected so, Disconnect takes the route out, the start magpie
@@ -229,6 +229,29 @@ func dshProfiles(dir string) []string {
 		}
 	}
 	return append(web, rest...)
+}
+
+// dshReadProfile keeps web's precedence, except when it is an unused empty
+// template beside a profile with a start model (as after Desktop imports
+// settings.yaml in 0.2). A read error or any entry is not an empty template.
+// This selects a display source only; writes still visit dshProfiles in order.
+func dshReadProfile(dir string) string {
+	files := dshProfiles(dir)
+	if len(files) == 0 {
+		return ""
+	}
+	first := files[0]
+	_, items, err := dshRead(first)
+	if err != nil || len(items) > 0 || dshStart(dir, items) != "" {
+		return first
+	}
+	for _, path := range files[1:] {
+		_, items, err := dshRead(path)
+		if err == nil && dshStart(dir, items) != "" {
+			return path
+		}
+	}
+	return first
 }
 
 // dshProfileTemplate is the patch list dsh writes for a new profile
@@ -703,11 +726,11 @@ var dshModelLine = regexp.MustCompile(`^\s+model:\s*(.+?)\s*$`)
 // dshGet reads the model new sessions start on: the one last picked in dsh,
 // saved in its settings (0.1.x), else the patch list's.
 func dshGet(dir string) string {
-	files := dshProfiles(dir)
-	if len(files) == 0 {
+	path := dshReadProfile(dir)
+	if path == "" {
 		return dshGetLegacy(filepath.Join(dir, "config.yaml"))
 	}
-	_, items, err := dshRead(files[0])
+	_, items, err := dshRead(path)
 	if err != nil {
 		return ""
 	}
@@ -791,8 +814,9 @@ func dshCheck(dir, gw string) string {
 		get := func(string) (string, bool) { return base, base != "" }
 		return wiringOff("DeepSeek Harness", path, get, "baseURL", gw+"/v1")
 	}
-	_, items, _ := dshRead(files[0])
-	routeFile := files[0]
+	profile := dshReadProfile(dir)
+	_, items, _ := dshRead(profile)
+	routeFile := profile
 	if dshHomeHas(dir, dshPiRow) {
 		routeFile = dshHomePatch(dir)
 		// the home layer's llm-pi-ai goes over every profile's: without
@@ -809,7 +833,10 @@ func dshCheck(dir, gw string) string {
 	// its start with it, is said as before, and so is one still on the old
 	// wiring, which dshSync moves rather than this round writing beside.
 	canWriteBack := len(magpieModels("dsh")) > 0
-	for _, f := range files[1:] {
+	for _, f := range files {
+		if f == profile {
+			continue
+		}
 		_, items, err := dshRead(f)
 		if err != nil || dshWired(dshOver(dir, items)) {
 			continue
@@ -2204,15 +2231,15 @@ func DshPatchFiles(dir string) []string { return dshFiles(dir) }
 
 // dshGetEffort reads the effort sessions start with.
 func dshGetEffort(dir string) string {
-	files := dshProfiles(dir)
-	if len(files) == 0 {
+	path := dshReadProfile(dir)
+	if path == "" {
 		_, items, err := dshRead(filepath.Join(dir, "config.yaml"))
 		if err != nil {
 			return ""
 		}
 		return dshEffortIn(items)
 	}
-	_, items, err := dshRead(files[0])
+	_, items, err := dshRead(path)
 	if err != nil {
 		return ""
 	}
